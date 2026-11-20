@@ -14,12 +14,14 @@ public final class Requests {
   public record LoginReq(@NotBlank(message = "用户名不能为空") String username,
                          @NotBlank(message = "密码不能为空") String password) {}
 
-  /** plantId 为空时取批次工厂；集团采购批次可按行归属不同工厂 */
+  /** plantId 为空时取批次工厂；集团采购批次可按行归属不同工厂；unit 为空时取能源类型规范单位；basis 显式声明计量基准 */
   public record RowInput(Long plantId,
                          Long productLineId,
                          @NotBlank(message = "能源类型不能为空") String energyType,
                          @NotNull(message = "数量不能为空") BigDecimal quantity,
-                         String voucherNo) {}
+                         String voucherNo,
+                         String unit,
+                         String basis) {}
 
   public record CreateBatchReq(@NotNull(message = "工厂不能为空") Long plantId,
                                @NotBlank(message = "批次类别不能为空") String category,
@@ -47,4 +49,42 @@ public final class Requests {
   public record FreezeReq(@NotNull(message = "必须选择核算运行") Long runId, String note) {}
 
   public record ReasonReq(String reason) {}
+
+  /** 登记校准/化验证据 */
+  public record CreateEvidenceReq(@NotBlank String evidenceNo,
+                                  @NotBlank String evidenceType,
+                                  @NotBlank String title,
+                                  String sourceRef,
+                                  String issuer,
+                                  @NotBlank String issuedDate,
+                                  @NotBlank String effectiveFrom,
+                                  String effectiveTo,
+                                  Long plantId,
+                                  String energyType,
+                                  @NotBlank String measuredProp,
+                                  @NotNull BigDecimal nominalValue,
+                                  @NotBlank String unit,
+                                  Integer sigFigs,
+                                  BigDecimal uncertaintyPct,
+                                  String note) {}
+
+  /** 登记换算依据（物质/能源—单位—工厂—期间组合，草稿；审核员批准后生成有向换算边） */
+  public record CreateConversionBaseReq(@NotBlank String code,
+                                        @NotBlank String name,
+                                        @NotBlank String energyType,
+                                        Long plantId,
+                                        @NotBlank String periodFrom,
+                                        String periodTo,
+                                        @NotBlank String sourceUnit,
+                                        String sourceBasis,
+                                        @NotBlank String targetUnit,
+                                        String targetBasis,
+                                        @NotBlank String edgeKind,
+                                        @NotNull BigDecimal factorValue,
+                                        Integer sigFigs,
+                                        @NotNull BigDecimal uncertaintyPct,
+                                        Long evidenceId,
+                                        String conditionKey,
+                                        String conditionValue,
+                                        Boolean parallelConflict) {}
 }

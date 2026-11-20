@@ -4,6 +4,7 @@ import com.group.carbon.common.BizException;
 import com.group.carbon.common.Types.*;
 import com.group.carbon.model.*;
 import com.group.carbon.repo.*;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,12 +30,14 @@ public class DisclosureService {
   private final ProductLineRepo lineRepo;
   private final RestatementRepo restatementRepo;
   private final ImpactAssessmentRepo impactRepo;
+  private final ConversionService conversionService;
 
   public DisclosureService(ReportRepo reportRepo, ReportVersionRepo versionRepo,
                            ReportItemRepo itemRepo, ReconciliationRepo reconRepo,
                            EmissionResultRepo resultRepo, CalcRunRepo runRepo,
                            ProductLineRepo lineRepo, RestatementRepo restatementRepo,
-                           ImpactAssessmentRepo impactRepo) {
+                           ImpactAssessmentRepo impactRepo,
+                           @Lazy ConversionService conversionService) {
     this.reportRepo = reportRepo;
     this.versionRepo = versionRepo;
     this.itemRepo = itemRepo;
@@ -44,6 +47,7 @@ public class DisclosureService {
     this.lineRepo = lineRepo;
     this.restatementRepo = restatementRepo;
     this.impactRepo = impactRepo;
+    this.conversionService = conversionService;
   }
 
   public List<Report> listReports() { return reportRepo.findAllByOrderByIdDesc(); }
@@ -59,6 +63,7 @@ public class DisclosureService {
       ReportVersion latest = versions.get(0);
       out.put("items", itemRepo.findByReportVersionIdOrderById(latest.getId()));
       out.put("reconciliations", reconRepo.findByReportVersionIdOrderById(latest.getId()));
+      out.put("cellTraces", conversionService.tracesOfVersion(latest.getId()));
     }
     return out;
   }
@@ -70,6 +75,7 @@ public class DisclosureService {
     out.put("version", v);
     out.put("items", itemRepo.findByReportVersionIdOrderById(versionId));
     out.put("reconciliations", reconRepo.findByReportVersionIdOrderById(versionId));
+    out.put("cellTraces", conversionService.tracesOfVersion(versionId));
     return out;
   }
 
@@ -148,9 +154,11 @@ public class DisclosureService {
       item.setEnergyType(key.energyType());
       item.setActivityQty(e.getValue().stream()
           .map(EmissionResult::getActivityQty).reduce(BigDecimal.ZERO, BigDecimal::add));
-      boolean pending = e.getValue().stream().anyMatch(r -> r.getStatus() == ResultStatus.PENDING_FACTOR);
-      item.setItemStatus(pending ? ResultStatus.PENDING_FACTOR : ResultStatus.OK);
-      item.setEmissionTco2e(pending ? null : e.getValue().stream()
+      boolean pendingFactor = e.getValue().stream().anyMatch(r -> r.getStatus() == ResultStatus.PENDING_FACTOR);
+      boolean pendingConv = e.getValue().stream().anyMatch(r -> r.getStatus() == ResultStatus.PENDING_CONVERSION);
+      item.setItemStatus(pendingFactor ? ResultStatus.PENDING_FACTOR
+          : (pendingConv ? ResultStatus.PENDING_CONVERSION : ResultStatus.OK));
+      item.setEmissionTco2e((pendingFactor || pendingConv) ? null : e.getValue().stream()
           .map(r -> r.getEmissionTco2e() == null ? BigDecimal.ZERO : r.getEmissionTco2e())
           .reduce(BigDecimal.ZERO, BigDecimal::add));
       items.add(itemRepo.save(item));
@@ -165,8 +173,10 @@ public class DisclosureService {
     version.setTotalScope3(s3);
     version.setTotalTco2e(s1.add(s2).add(s3));
 
-    // 3) 勾稽：工厂明细合计 vs 产品线合计
-    int pendingCount = (int) items.stream().filter(i -> i.getItemStatus() == ResultStatus.PENDING_FACTOR).count();
+    // 3) 勾稽：工厂明细合计 vs 产品线合计（缺因子与换算未闭合均列为待核）
+    int pendingCount = (int) items.stream()
+        .filter(i -> i.getItemStatus() == ResultStatus.PENDING_FACTOR
+            || i.getItemStatus() == ResultStatus.PENDING_CONVERSION).count();
     version.setPendingCount(pendingCount);
     BigDecimal grandByPlant = items.stream()
         .map(i -> i.getEmissionTco2e() == null ? BigDecimal.ZERO : i.getEmissionTco2e())
@@ -204,6 +214,9 @@ public class DisclosureService {
     version.setReconcileStatus(reconcile);
     version.setReconcileDiff(unallocated);
     versionRepo.save(version);
+
+    // 4) 披露单元格追溯：能量/排放/强度单元格附可复算换算路径与不确定范围
+    conversionService.traceVersion(version, items);
 
     report.setStatus(reconcile == ReconcileStatus.OK ? ReportStatus.PENDING_REVIEW : ReportStatus.RECONCILE_FAILED);
     reportRepo.save(report);

@@ -13,6 +13,8 @@ public final class EnergyTypes {
   static {
     MAP.put("NATURAL_GAS", new Meta("SCOPE1", "m3",  "天然气",   "FUEL"));
     MAP.put("DIESEL",      new Meta("SCOPE1", "L",   "柴油",     "FUEL"));
+    MAP.put("COAL",        new Meta("SCOPE1", "GJ",  "煤炭",     "FUEL"));
+    MAP.put("FUEL_OIL",    new Meta("SCOPE1", "L",   "燃料油",   "FUEL"));
     MAP.put("GRID_ELEC",   new Meta("SCOPE2", "kWh", "外购电力", "ELECTRICITY"));
     MAP.put("PURCH_STEEL", new Meta("SCOPE3", "t",   "采购钢材", "PROCUREMENT"));
     MAP.put("PURCH_ALU",   new Meta("SCOPE3", "t",   "采购铝材", "PROCUREMENT"));

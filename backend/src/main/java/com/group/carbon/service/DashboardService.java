@@ -81,7 +81,8 @@ public class DashboardService {
         .findFirst().orElse(null);
     long pendingResults = latestOfficial == null ? 0
         : resultRepo.findByRunIdOrderById(latestOfficial.getId()).stream()
-            .filter(r -> r.getStatus() == ResultStatus.PENDING_FACTOR).count();
+            .filter(r -> r.getStatus() == ResultStatus.PENDING_FACTOR
+                || r.getStatus() == ResultStatus.PENDING_CONVERSION).count();
 
     Map<String, Object> counts = new LinkedHashMap<>();
     counts.put("openImpacts", openImpacts);

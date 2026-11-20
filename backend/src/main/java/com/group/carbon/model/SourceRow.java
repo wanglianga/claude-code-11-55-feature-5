@@ -25,6 +25,8 @@ public class SourceRow {
   private BigDecimal quantity;
   @Column(nullable = false)
   private String unit;
+  /** 计量基准 WET/DRY/STD/OP/LHV；空=未声明 */
+  private String basis;
   @Column(name = "voucher_no")
   private String voucherNo;
   @Column(nullable = false)
@@ -51,6 +53,8 @@ public class SourceRow {
   public void setQuantity(BigDecimal quantity) { this.quantity = quantity; }
   public String getUnit() { return unit; }
   public void setUnit(String unit) { this.unit = unit; }
+  public String getBasis() { return basis; }
+  public void setBasis(String basis) { this.basis = basis; }
   public String getVoucherNo() { return voucherNo; }
   public void setVoucherNo(String voucherNo) { this.voucherNo = voucherNo; }
   public String getPeriod() { return period; }

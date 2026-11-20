@@ -111,6 +111,39 @@
           <template #default="{ row }"><StatusTag kind="reconcile" :value="row.status" /></template>
         </el-table-column>
       </el-table>
+
+      <h4>披露单元格追溯（能量/排放/强度：可复算换算路径与不确定范围）</h4>
+      <el-table :data="versionDetail.cellTraces || []" size="small" border>
+        <el-table-column label="工厂" width="90">
+          <template #default="{ row }">{{ store.plantName(row.plantId) }}</template>
+        </el-table-column>
+        <el-table-column label="能源" width="90">
+          <template #default="{ row }">{{ store.energyLabel(row.energyType) }}</template>
+        </el-table-column>
+        <el-table-column label="单元格" width="80">
+          <template #default="{ row }">{{ cellTypeLabel(row.cellType) }}</template>
+        </el-table-column>
+        <el-table-column label="展示值（各自单位/小数位）" width="180">
+          <template #default="{ row }">
+            {{ row.displayedValue != null
+              ? Number(row.displayedValue).toFixed(row.displayDecimals) + ' ' + row.displayedUnit : '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="不确定范围" min-width="180">
+          <template #default="{ row }">
+            <span v-if="row.lowerValue != null">
+              [{{ Number(row.lowerValue).toFixed(row.displayDecimals) }},
+              {{ Number(row.upperValue).toFixed(row.displayDecimals) }}]
+            </span>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="追溯状态" width="110">
+          <template #default="{ row }"><StatusTag kind="trace" :value="row.traceStatus" /></template>
+        </el-table-column>
+        <el-table-column prop="evidenceSummary" label="引用证据" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="frozenNote" label="冻结后补证差异" min-width="220" show-overflow-tooltip />
+      </el-table>
     </div>
 
     <div class="page-card" v-if="data.restatements.length">
@@ -181,6 +214,10 @@ async function selectVersion(versionId) {
 function versionNoOf(versionId) {
   const v = (data.value?.versions || []).find(x => x.id === versionId)
   return v ? v.versionNo : '?'
+}
+
+function cellTypeLabel(t) {
+  return { ENERGY: '能量', EMISSION: '排放', INTENSITY: '强度' }[t] || t
 }
 
 async function approve() {

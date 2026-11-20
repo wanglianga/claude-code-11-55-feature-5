@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ import java.util.List;
  * 2025-06 批次（含未分摊行、缺因子行、集团采购批次）用于验收回放。
  */
 @Component
+@Order(10)
 public class SampleDataInitializer implements ApplicationRunner {
   private static final Logger log = LoggerFactory.getLogger(SampleDataInitializer.class);
 
@@ -179,12 +181,19 @@ public class SampleDataInitializer implements ApplicationRunner {
 
   private RowInput row(ProductLine line, String energyType, String quantity, String voucher) {
     return new RowInput(null, line != null ? line.getId() : null, energyType,
-        new BigDecimal(quantity), voucher);
+        new BigDecimal(quantity), voucher, null, null);
   }
 
   private RowInput row(Plant plant, ProductLine line, String energyType, String quantity, String voucher) {
     return new RowInput(plant.getId(), line != null ? line.getId() : null, energyType,
-        new BigDecimal(quantity), voucher);
+        new BigDecimal(quantity), voucher, null, null);
+  }
+
+  /** 原始单位/计量基准行（测量换算样例用）。 */
+  private RowInput rawRow(Plant plant, ProductLine line, String energyType, String quantity,
+                          String unit, String basis) {
+    return new RowInput(plant.getId(), line != null ? line.getId() : null, energyType,
+        new BigDecimal(quantity), null, unit, basis);
   }
 
   private SourceBatch batch(String batchNo, Plant plant, String category, String period, List<RowInput> rows) {

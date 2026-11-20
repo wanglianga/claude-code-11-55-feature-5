@@ -9,6 +9,8 @@
   S3 并发采购更正：已核算采购量不可覆盖；同批次并发修订冲突
   S4 勾稽不平：报告保持待核，审批/发布被拒；修复后放行
   S5 已发布报告发现来源缺失：生成重述建议与差异说明，不覆盖已发布报告
+  S6 测量换算与派生指标：四类换算状态、逐边路径、不确定范围、冲突保留、
+     跨期密度修订、复合单位、强度分母为空、冻结后补证产生新版本
 前置：后端已启动（默认 http://127.0.0.1:8080），数据库为初始种子状态。
 """
 import json
@@ -84,6 +86,187 @@ def report_of(token, period):
         if r['period'] == period:
             return r
     return None
+
+
+def run_s6(admin, analyst, auditor, finance):
+    print('\n[S6] 测量换算与派生指标证明')
+    # 2025-07 正式运行（种子自动生成）
+    s, runs = req('GET', '/runs', token=admin)
+    run_jul = next(r for r in runs if r['period'] == '2025-07' and r['purpose'] == 'OFFICIAL')
+    check('S6 2025-07 换算验收运行已完成', run_jul['status'] == 'COMPLETED')
+    rid = run_jul['id']
+
+    # 6.0 四类状态计数
+    s, summ = req('GET', f'/conversion/runs/{rid}/summary', token=admin)
+    check('S6 四类状态：可转换5/人工桥接1/量纲不相容1/证据不足2',
+          summ['CONVERTIBLE'] == 5 and summ['MANUAL_BRIDGE'] == 1
+          and summ['DIMENSION_INCOMPATIBLE'] == 1 and summ['INSUFFICIENT_EVIDENCE'] == 2,
+          str(summ))
+    check('S6 初始状态无换算冲突', summ['conflictCount'] == 0, str(summ))
+
+    s, convs = req('GET', f'/conversion/runs/{rid}/conversions', token=admin)
+    def find_conv(energy, unit, qty):
+        return next((c for c in convs
+                     if c['energyType'] == energy and c['sourceUnit'] == unit
+                     and abs(float(c['sourceQty']) - qty) < 1e-6), None)
+
+    # 6.1 工况天然气：标况/工况不可凭名称互换，经校准+化验链闭合到 GJ
+    ng = find_conv('NATURAL_GAS', 'm3', 50000)
+    check('S6 工况天然气可直接转换', ng and ng['convStatus'] == 'CONVERTIBLE', str(ng))
+    check('S6 天然气物理能量 ≈ 2067.183 GJ（50000×1.062×0.03893）',
+          ng and abs(float(ng['targetQty']) - 2067.183) < 0.01, str(ng and ng['targetQty']))
+    check('S6 能量带不确定上下界',
+          ng and ng['lowerQty'] is not None and float(ng['lowerQty']) < float(ng['targetQty']) < float(ng['upperQty']))
+    path = json.loads(ng['pathJson'])
+    all_steps = [st for p in path['paths'] for st in p['steps']]
+    ev_nos = {st.get('evidenceNo') for st in all_steps if st.get('evidenceNo')}
+    check('S6 换算链引用校准证书与化验报告证据',
+          'EV-CAL-NG-TEMP' in ev_nos and 'EV-LAB-NG-SZ' in ev_nos, str(ev_nos))
+    bases_seen = {(st['fromUnit'], st['toUnit']) for st in all_steps}
+    check('S6 路径逐边：工况m3→标况Nm3→GJ',
+          ('m3', 'Nm3') in bases_seen and ('Nm3', 'GJ') in bases_seen, str(bases_seen))
+
+    # 6.2 跨期密度修订：2025-07 必须使用新密度 0.000842，旧密度 0.000835 不适用
+    diesel = find_conv('DIESEL', 'L', 900)
+    check('S6 柴油跨期密度修订链可直接转换', diesel and diesel['convStatus'] == 'CONVERTIBLE')
+    dpath = json.loads(diesel['pathJson'])
+    dtxt = json.dumps(dpath, ensure_ascii=False)
+    check('S6 2025-07 采用新密度 0.000842（旧密度 0.000835 不适用本期间）',
+          '0.000842' in dtxt and '0.000835' not in dtxt, dtxt[:200])
+    check('S6 柴油物理能量 ≈ 34.0978 GJ',
+          abs(float(diesel['targetQty']) - 34.097779) < 0.01, str(diesel['targetQty']))
+
+    # 6.3 湿度缺失：苏州煤炭湿基→干基边无证据，中途截断
+    coal_sz = find_conv('COAL', 't', 120)
+    check('S6 湿度缺失→证据不足并中途截断',
+          coal_sz and coal_sz['convStatus'] == 'INSUFFICIENT_EVIDENCE'
+          and '截断' in (coal_sz.get('truncateReason') or ''), str(coal_sz))
+    coal_cd = find_conv('COAL', 't', 80)
+    check('S6 成都煤炭无适用依据→证据不足',
+          coal_cd and coal_cd['convStatus'] == 'INSUFFICIENT_EVIDENCE', str(coal_cd))
+
+    # 6.4 人工桥接
+    fo = find_conv('FUEL_OIL', 'LN', 6000)
+    check('S6 仅人工桥接说明→MANUAL_BRIDGE', fo and fo['convStatus'] == 'MANUAL_BRIDGE', str(fo))
+
+    # 6.5 复合单位展开 + 采购 kg→t
+    wan = find_conv('NATURAL_GAS', '万Nm3', 5.2)
+    check('S6 复合单位万Nm3经COMPOUND边展开后可转换',
+          wan and wan['convStatus'] == 'CONVERTIBLE'
+          and abs(float(wan['canonicalQty']) - 48964.188) < 0.01, str(wan and wan['canonicalQty']))
+    alu = find_conv('PURCH_ALU', 'kg', 450)
+    check('S6 采购铝材 450kg → 0.45t 同量纲前缀换算',
+          alu and alu['convStatus'] == 'CONVERTIBLE' and abs(float(alu['canonicalQty']) - 0.45) < 1e-6,
+          str(alu))
+
+    # 6.6 量纲不相容 + 强度分母为空
+    elec_bad = find_conv('GRID_ELEC', 't', 30)
+    check('S6 电量误按质量单位登记→量纲不相容',
+          elec_bad and elec_bad['convStatus'] == 'DIMENSION_INCOMPATIBLE', str(elec_bad))
+    elec_ok = find_conv('GRID_ELEC', 'kWh', 100000)
+    check('S6 电力读数恒等可转换', elec_ok and elec_ok['convStatus'] == 'CONVERTIBLE')
+
+    # 6.7 换算证明详情接口
+    s, cd = req('GET', f"/conversion/conversions/{ng['id']}", token=admin)
+    check('S6 换算证明详情含来源行与路径', s == 200 and cd['sourceRow']['id'] == ng['sourceRowId'])
+
+    # 6.8 派生指标：能量/排放/强度三列单位与小数位、空分母
+    s, metrics = req('GET', f'/conversion/runs/{rid}/metrics', token=admin)
+    ng_energy = next(m for m in metrics if m['energyType'] == 'NATURAL_GAS'
+                     and m['plantId'] == 1 and m['metricKind'] == 'ENERGY')
+    check('S6 能量指标 GJ、2 位小数口径并带范围',
+          ng_energy['metricUnit'] == 'GJ' and ng_energy['displayDecimals'] == 2
+          and ng_energy['lowerValue'] is not None, str(ng_energy))
+    ng_int = next(m for m in metrics if m['energyType'] == 'NATURAL_GAS'
+                  and m['plantId'] == 1 and m['metricKind'] == 'INTENSITY')
+    check('S6 强度 tCO2e/GJ、4 位小数且可计算',
+          ng_int['metricStatus'] == 'OK' and ng_int['displayDecimals'] == 4
+          and ng_int['metricValue'] is not None, str(ng_int))
+    empty_den = [m for m in metrics if m['metricKind'] == 'INTENSITY'
+                 and m['metricStatus'] == 'EMPTY_DENOMINATOR']
+    check('S6 电力/采购强度分母为空→EMPTY_DENOMINATOR（不强行算强度）',
+          len(empty_den) >= 2, str([(m['energyType'], m['metricStatus']) for m in metrics]))
+    coal_metrics = [m for m in metrics if m['energyType'] == 'COAL']
+    check('S6 未闭合换算的派生指标保持待核',
+          all(m['metricStatus'] in ('PENDING_CONVERSION', 'PENDING_FACTOR') for m in coal_metrics))
+
+    # 6.9 披露单元格追溯
+    rep7 = report_of(admin, '2025-07')
+    s, rd7 = req('GET', f"/reports/{rep7['id']}", token=admin)
+    v1j = rd7['versions'][0]
+    check('S6 2025-07 报告含待核项保持待核',
+          rd7['report']['status'] == 'RECONCILE_FAILED' and v1j['pendingCount'] == 4,
+          str(rd7['report']['status']))
+    traces = rd7['cellTraces']
+    statuses = {(t['cellType'], t['traceStatus']) for t in traces}
+    check('S6 单元格追溯四类状态齐全（TRACEABLE/PENDING/EMPTY_DENOMINATOR）',
+          ('EMISSION', 'TRACEABLE') in statuses and ('ENERGY', 'PENDING') in statuses
+          and ('INTENSITY', 'EMPTY_DENOMINATOR') in statuses, str(statuses))
+    tr = next(t for t in traces if t['energyType'] == 'NATURAL_GAS' and t['cellType'] == 'ENERGY')
+    check('S6 能量单元格附范围与证据摘要',
+          tr['lowerValue'] is not None and tr['upperValue'] is not None
+          and 'EV-' in (tr['evidenceSummary'] or ''), str(tr))
+    tj = json.loads(tr['tracePathJson'])
+    check('S6 单元格路径可复算：含来源行、换算证明与因子版本',
+          len(tj.get('conversionIds', [])) > 0 and 'factorVersionId' in tj, str(tj)[:200])
+
+    # 6.10 权限：分析员不能批准换算依据
+    s, b = req('POST', '/conversion/bases', {
+        'code': 'CB-PERM-TEST', 'name': '权限测试依据', 'energyType': 'DIESEL', 'plantId': 1,
+        'periodFrom': '2025-07', 'sourceUnit': 'L', 'targetUnit': 'm3',
+        'edgeKind': 'PROPERTY', 'factorValue': 0.001, 'uncertaintyPct': 1.0}, token=analyst)
+    check('S6 分析员可创建换算依据草稿', s == 200, str(b))
+    s, b2 = req('POST', f"/conversion/bases/{b['id']}/approve", token=analyst)
+    check('S6 分析员批准依据被拒绝(403)', s == 403, f's={s}')
+
+    # 6.11 冻结后补证：含水率化验补到 → 新核算版本，原披露保留当时范围
+    s, ev = req('POST', '/conversion/evidence', {
+        'evidenceNo': 'EV-LAB-COAL-MOIST-S6', 'evidenceType': 'LAB_ASSAY',
+        'title': '煤炭含水率化验（披露冻结后补证）', 'sourceRef': 'LAB-S6-M01',
+        'issuer': '集团中心化验室', 'issuedDate': '2025-07-18', 'effectiveFrom': '2025-07-01',
+        'plantId': 1, 'energyType': 'COAL', 'measuredProp': 'MOISTURE',
+        'nominalValue': 0.06, 'unit': 'fraction', 'sigFigs': 2, 'uncertaintyPct': 3.0}, token=analyst)
+    check('S6 冻结后补登含水率化验证据', s == 200, str(ev))
+    s, nb = req('POST', '/conversion/bases', {
+        'code': 'CB-COAL-WET-DRY-S6', 'name': '煤炭湿基→干基（补证 0.94）', 'energyType': 'COAL',
+        'plantId': 1, 'periodFrom': '2025-07', 'sourceUnit': 't', 'sourceBasis': 'WET',
+        'targetUnit': 't', 'targetBasis': 'DRY', 'edgeKind': 'BASIS_SWITCH',
+        'factorValue': 0.94, 'uncertaintyPct': 3.0, 'evidenceId': ev['id']}, token=analyst)
+    s, ap = req('POST', f"/conversion/bases/{nb['id']}/approve", token=auditor)
+    check('S6 审核员批准补证依据', s == 200 and ap['status'] == 'APPROVED', str(ap))
+
+    s, nr = req('POST', '/runs', {'period': '2025-07'}, token=analyst)
+    nr = wait_run(admin, nr['id'])
+    s, summ2 = req('GET', f"/conversion/runs/{nr['id']}/summary", token=admin)
+    check('S6 补证后：苏州煤炭闭合（CONVERTIBLE=6）且保留 1 条冲突',
+          summ2['CONVERTIBLE'] == 6 and summ2['conflictCount'] == 1
+          and summ2['INSUFFICIENT_EVIDENCE'] == 1, str(summ2))
+    s, conflicts = req('GET', f"/conversion/runs/{nr['id']}/conflicts", token=admin)
+    cc = next((x for x in conflicts if x['energyType'] == 'COAL'), None)
+    check('S6 两份相反热值依据：同一读数解释为不同能量并保留（不取平均）',
+          cc and abs(float(cc['qtyA']) - 2312.4) < 0.1 and abs(float(cc['qtyB']) - 2718.48) < 0.1,
+          str(cc and (cc['qtyA'], cc['qtyB'])))
+
+    # 冻结新版本：原 v1 保留当时范围，新 v2 记录差异说明
+    s, fv = req('POST', f"/reports/{rep7['id']}/freeze",
+                {'runId': nr['id'], 'note': '冻结后补证重算（含水率化验）'}, token=analyst)
+    check('S6 补证后冻结新版本 v2', s == 200 and fv['versionNo'] == 2, str(fv))
+    s, rd7b = req('GET', f"/reports/{rep7['id']}", token=admin)
+    v1_after, v2_after = rd7b['versions'][1], rd7b['versions'][0]
+    check('S6 原披露 v1 保留（仍为冻结态、内容未被覆盖）',
+          v1_after['versionNo'] == 1 and v1_after['status'] == 'SUPERSEDED', str(v1_after['status']))
+    s, vd2 = req('GET', f"/reports/versions/{v2_after['id']}", token=admin)
+    coal_energy_traces = [t for t in vd2['cellTraces']
+                          if t['energyType'] == 'COAL' and t['cellType'] == 'ENERGY' and t['plantId'] == 1]
+    check('S6 新核算版本煤炭能量单元格标记 CONFLICT 并附冻结差异说明',
+          coal_energy_traces and coal_energy_traces[0]['traceStatus'] == 'CONFLICT'
+          and coal_energy_traces[0]['frozenNote'] is not None,
+          str(coal_energy_traces[:1]))
+    s, vd1 = req('GET', f"/reports/versions/{v1_after['id']}", token=admin)
+    v1_coal = [t for t in vd1['cellTraces'] if t['energyType'] == 'COAL' and t['cellType'] == 'ENERGY']
+    check('S6 v1 当时范围保留：煤炭能量仍为待核无值（未被补证回填）',
+          all(t['displayedValue'] is None and t['traceStatus'] == 'PENDING' for t in v1_coal),
+          str([(t['traceStatus'], t['displayedValue']) for t in v1_coal]))
 
 
 def main():
@@ -336,6 +519,9 @@ def main():
           and statuses.get(3) == 'RESTATED' and statuses.get(4) == 'PUBLISHED', str(statuses))
     check('S5 v4 范围一 = 4.02（仅剩补录柴油）',
           abs(float(v4['totalScope1']) - 4.02) < 0.01, str(v4['totalScope1']))
+
+    # ---------- S6 测量换算与派生指标 ----------
+    run_s6(admin, analyst, auditor, finance)
 
     # ---------- 汇总 ----------
     print('\n========================================')

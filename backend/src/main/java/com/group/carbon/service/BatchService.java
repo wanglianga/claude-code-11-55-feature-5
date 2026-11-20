@@ -152,7 +152,9 @@ public class BatchService {
       row.setScope(meta.scope());
       row.setEnergyType(input.energyType());
       row.setQuantity(input.quantity());
-      row.setUnit(meta.unit());
+      // 允许按表计/采购原始单位登记；为空时回退能源类型规范单位
+      row.setUnit(input.unit() != null && !input.unit().isBlank() ? input.unit() : meta.unit());
+      row.setBasis(input.basis());
       row.setVoucherNo(input.voucherNo());
       row.setPeriod(batch.getPeriod());
       row.setStatus(RowStatus.ACTIVE);

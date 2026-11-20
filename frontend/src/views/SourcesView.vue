@@ -94,6 +94,22 @@
                                  :controls="false" style="width:130px" />
               </template>
             </el-table-column>
+            <el-table-column label="原始单位" width="110">
+              <template #default="{ row }">
+                <el-input v-model="row.unit" placeholder="空=规范单位" />
+              </template>
+            </el-table-column>
+            <el-table-column label="计量基准" width="110">
+              <template #default="{ row }">
+                <el-select v-model="row.basis" placeholder="未声明" clearable size="small">
+                  <el-option label="湿基 WET" value="WET" />
+                  <el-option label="干基 DRY" value="DRY" />
+                  <el-option label="标况 STD" value="STD" />
+                  <el-option label="工况 OP" value="OP" />
+                  <el-option label="低位热值 LHV" value="LHV" />
+                </el-select>
+              </template>
+            </el-table-column>
             <el-table-column label="供应商凭证" v-if="dialog.category === 'PROCUREMENT'">
               <template #default="{ row }">
                 <el-input v-model="row.voucherNo" placeholder="如 V-1001" />
@@ -140,8 +156,11 @@
           <el-table-column label="能源" width="90">
             <template #default="{ row }">{{ store.energyLabel(row.energyType) }}</template>
           </el-table-column>
-          <el-table-column label="数量" width="110">
+          <el-table-column label="数量" width="120">
             <template #default="{ row }">{{ fmtNum(row.quantity) }} {{ row.unit }}</template>
+          </el-table-column>
+          <el-table-column label="计量基准" width="84">
+            <template #default="{ row }">{{ row.basis || '未声明' }}</template>
           </el-table-column>
           <el-table-column prop="voucherNo" label="凭证" width="90">
             <template #default="{ row }">{{ row.voucherNo || '-' }}</template>
@@ -210,7 +229,8 @@ function categoryLabel(c) {
 }
 
 function newRow() {
-  return { plantId: null, productLineId: null, energyType: null, quantity: 1, voucherNo: '' }
+  return { plantId: null, productLineId: null, energyType: null, quantity: 1,
+           voucherNo: '', unit: '', basis: null }
 }
 
 async function load() {
@@ -238,7 +258,8 @@ async function openRevise(row) {
   const resp = await api.get(`/batches/${row.id}`)
   const rows = resp.data.rows.map(r => ({
     plantId: r.plantId, productLineId: r.productLineId, energyType: r.energyType,
-    quantity: Number(r.quantity), voucherNo: r.voucherNo || ''
+    quantity: Number(r.quantity), voucherNo: r.voucherNo || '',
+    unit: r.unit || '', basis: r.basis || null
   }))
   Object.assign(dialog, {
     visible: true, revising: true, saving: false,
@@ -255,7 +276,8 @@ async function submitDialog() {
       plantId: dialog.plantId, category: dialog.category, period: dialog.period,
       rows: dialog.rows.map(r => ({
         plantId: r.plantId, productLineId: r.productLineId, energyType: r.energyType,
-        quantity: r.quantity, voucherNo: r.voucherNo || null
+        quantity: r.quantity, voucherNo: r.voucherNo || null,
+        unit: r.unit || null, basis: r.basis || null
       }))
     }
     if (dialog.revising) {

@@ -5,6 +5,7 @@ import com.group.carbon.common.EnergyTypes;
 import com.group.carbon.common.Types.*;
 import com.group.carbon.model.*;
 import com.group.carbon.repo.*;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,11 +33,13 @@ public class RunService {
   private final FactorRepo factorRepo;
   private final FactorVersionRepo versionRepo;
   private final PlantRepo plantRepo;
+  private final ConversionService conversionService;
 
   public RunService(CalcRunRepo runRepo, RunFactorBindingRepo bindingRepo,
                     EmissionResultRepo resultRepo, EmissionLineageRepo lineageRepo,
                     SourceRowRepo rowRepo, SourceBatchRepo batchRepo,
-                    FactorRepo factorRepo, FactorVersionRepo versionRepo, PlantRepo plantRepo) {
+                    FactorRepo factorRepo, FactorVersionRepo versionRepo, PlantRepo plantRepo,
+                    @Lazy ConversionService conversionService) {
     this.runRepo = runRepo;
     this.bindingRepo = bindingRepo;
     this.resultRepo = resultRepo;
@@ -46,6 +49,7 @@ public class RunService {
     this.factorRepo = factorRepo;
     this.versionRepo = versionRepo;
     this.plantRepo = plantRepo;
+    this.conversionService = conversionService;
   }
 
   public static void validatePeriod(String period) {
@@ -116,16 +120,24 @@ public class RunService {
 
   private record GroupKey(Long plantId, Long productLineId, String energyType) {}
 
-  /** 执行核算：仅使用启动时绑定的因子清单；结果与来源行建立血缘。 */
+  /** 执行核算：先逐行生成测量换算证明，再仅使用启动时绑定的因子清单；结果与来源行建立血缘。 */
   @Transactional
   public void execute(Long runId) {
     CalcRun run = runRepo.findById(runId).orElseThrow(() -> BizException.notFound("运行不存在"));
     if (run.getStatus() != RunStatus.RUNNING) return;
     try {
+      // 1) 测量换算证明：每段活动量连接到可用换算链（四类状态 + 不确定范围 + 冲突保留）
+      conversionService.proveConversions(runId, run.getPeriod());
+
       List<RunFactorBinding> bindings = bindingRepo.findByRunId(runId);
       List<SourceRow> rows = rowRepo.findActiveVerifiedByPeriod(run.getPeriod(), RowStatus.ACTIVE);
       Map<Long, Plant> plants = plantRepo.findAll().stream()
           .collect(Collectors.toMap(Plant::getId, p -> p));
+      // 换算证明按来源行索引：因子按规范单位口径作用于换算后的活动量
+      Map<Long, ActivityConversion> convByRow = new LinkedHashMap<>();
+      for (ActivityConversion c : conversionService.conversionsOfRun(runId)) {
+        convByRow.put(c.getSourceRowId(), c);
+      }
 
       Map<GroupKey, List<SourceRow>> groups = new LinkedHashMap<>();
       for (SourceRow r : rows) {
@@ -135,10 +147,22 @@ public class RunService {
 
       for (Map.Entry<GroupKey, List<SourceRow>> e : groups.entrySet()) {
         GroupKey key = e.getKey();
-        BigDecimal qty = e.getValue().stream()
-            .map(SourceRow::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
         Plant plant = plants.get(key.plantId());
         if (plant == null) throw BizException.badRequest("来源行引用了不存在的工厂: " + key.plantId());
+
+        // 规范因子单位活动量：优先取换算证明的规范量；同单位恒等时与原始数量一致
+        BigDecimal qty = BigDecimal.ZERO;
+        boolean convOpen = false;
+        for (SourceRow sr : e.getValue()) {
+          ActivityConversion ac = convByRow.get(sr.getId());
+          if (ac != null && ac.getConvStatus() == ConversionStatus.CONVERTIBLE
+              && ac.getCanonicalQty() != null) {
+            qty = qty.add(ac.getCanonicalQty());
+          } else {
+            qty = qty.add(sr.getQuantity()); // 未闭合时保留原始量用于展示，但结果将标记待核
+            convOpen = true;
+          }
+        }
 
         RunFactorBinding binding = bindings.stream()
             .filter(b -> b.getEnergyType().equals(key.energyType())
@@ -153,21 +177,31 @@ public class RunService {
         res.setEnergyType(key.energyType());
         res.setActivityQty(qty);
         res.setUnit(EnergyTypes.unitOf(key.energyType()));
-        if (binding != null) {
+        if (convOpen) {
+          // 换算链未闭合（人工桥接/量纲不相容/证据不足）优先标记：即便因子齐备也不得计算排放
+          res.setStatus(ResultStatus.PENDING_CONVERSION);
+          if (binding != null) {
+            res.setFactorVersionId(binding.getFactorVersionId());
+            res.setFactorValue(binding.getValue());
+          }
+        } else if (binding == null) {
+          // 缺少适用批准因子：指标列为待核，不用集团平均因子兜底
+          res.setStatus(ResultStatus.PENDING_FACTOR);
+        } else {
           res.setFactorVersionId(binding.getFactorVersionId());
           res.setFactorValue(binding.getValue());
           res.setEmissionTco2e(qty.multiply(binding.getValue())
               .divide(new BigDecimal("1000"), 6, RoundingMode.HALF_UP));
           res.setStatus(ResultStatus.OK);
-        } else {
-          // 缺少适用批准因子：指标列为待核，不用集团平均因子兜底
-          res.setStatus(ResultStatus.PENDING_FACTOR);
         }
         resultRepo.save(res);
         for (SourceRow row : e.getValue()) {
           lineageRepo.save(new EmissionLineage(res.getId(), row.getId(), row.getQuantity()));
         }
       }
+      // 2) 证明回填结果、生成派生指标（能量/排放/强度，含区间与空分母标记）
+      conversionService.linkResults(runId);
+      conversionService.buildDerivedMetrics(runId);
       run.setStatus(RunStatus.COMPLETED);
       run.setCompletedAt(LocalDateTime.now());
       runRepo.save(run);

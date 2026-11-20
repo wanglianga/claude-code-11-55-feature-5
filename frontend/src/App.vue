@@ -9,6 +9,7 @@
         <el-menu-item index="/sources"><el-icon><Upload /></el-icon>来源批次</el-menu-item>
         <el-menu-item index="/factors"><el-icon><Collection /></el-icon>因子目录</el-menu-item>
         <el-menu-item index="/runs"><el-icon><VideoPlay /></el-icon>核算运行</el-menu-item>
+        <el-menu-item index="/conversion"><el-icon><Switch /></el-icon>测量换算</el-menu-item>
         <el-menu-item index="/impacts"><el-icon><Warning /></el-icon>影响评估</el-menu-item>
         <el-menu-item index="/reports"><el-icon><Document /></el-icon>披露报告</el-menu-item>
       </el-menu>
@@ -32,7 +33,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { DataAnalysis, Upload, Collection, VideoPlay, Warning, Document } from '@element-plus/icons-vue'
+import { DataAnalysis, Upload, Collection, VideoPlay, Warning, Document, Switch } from '@element-plus/icons-vue'
 import { store } from './store'
 
 const router = useRouter()

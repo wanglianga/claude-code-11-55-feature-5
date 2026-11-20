@@ -61,7 +61,8 @@ export const STATUS_MAPS = {
     RUNNING: ['运行中', 'warning'], COMPLETED: ['已完成', 'success'], FAILED: ['失败', 'danger']
   },
   result: {
-    OK: ['正常', 'success'], PENDING_FACTOR: ['待核(缺因子)', 'warning']
+    OK: ['正常', 'success'], PENDING_FACTOR: ['待核(缺因子)', 'warning'],
+    PENDING_CONVERSION: ['待核(换算未闭合)', 'danger']
   },
   report: {
     DRAFT: ['草稿', 'info'], PENDING_REVIEW: ['待复核', 'warning'],
@@ -77,7 +78,8 @@ export const STATUS_MAPS = {
   },
   trigger: {
     SOURCE_SUPPLEMENT: ['来源补录', 'primary'], SOURCE_REVISION: ['来源修订', 'primary'],
-    SOURCE_MISSING: ['来源缺失', 'danger'], FACTOR_REVISION: ['因子修订', 'warning']
+    SOURCE_MISSING: ['来源缺失', 'danger'], FACTOR_REVISION: ['因子修订', 'warning'],
+    CONVERSION_REVISION: ['换算依据修订', 'warning']
   },
   impact: {
     OPEN: ['待处理', 'warning'], ACKNOWLEDGED: ['已受理', 'info'], RESOLVED: ['已解决', 'success']
@@ -88,6 +90,31 @@ export const STATUS_MAPS = {
   },
   purpose: {
     OFFICIAL: ['正式', 'primary'], CANDIDATE: ['候选', 'info']
+  },
+  conversion: {
+    CONVERTIBLE: ['可直接转换', 'success'],
+    MANUAL_BRIDGE: ['需人工桥接', 'warning'],
+    DIMENSION_INCOMPATIBLE: ['量纲不相容', 'danger'],
+    INSUFFICIENT_EVIDENCE: ['证据不足', 'danger']
+  },
+  metric: {
+    OK: ['正常', 'success'], PENDING_CONVERSION: ['换算待核', 'danger'],
+    PENDING_FACTOR: ['因子待核', 'warning'], EMPTY_DENOMINATOR: ['分母为空', 'info']
+  },
+  trace: {
+    TRACEABLE: ['可追溯', 'success'], PENDING: ['待核', 'warning'],
+    EMPTY_DENOMINATOR: ['分母为空', 'info'], CONFLICT: ['冲突保留', 'danger']
+  },
+  evidence: {
+    CALIBRATION: ['校准证书', 'primary'], LAB_ASSAY: ['化验报告', 'success'],
+    DENSITY_REVISION: ['密度修订', 'warning'], MANUAL_BRIDGE: ['人工桥接', 'info']
+  },
+  edge: {
+    UNIT_PREFIX: ['单位前缀', 'info'], BASIS_SWITCH: ['基准切换', 'warning'],
+    PROPERTY: ['物性换算', 'primary'], COMPOUND: ['复合单位', 'success']
+  },
+  base: {
+    DRAFT: ['草稿', 'info'], APPROVED: ['已批准', 'success'], SUPERSEDED: ['已取代', 'warning']
   }
 }
 
